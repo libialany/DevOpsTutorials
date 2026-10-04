@@ -45,19 +45,19 @@ jobs:
     name: sonarqube scan
     runs-on: ubuntu-latest
     steps:
-      - name: Debug Environment Variables
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        run: |
-          echo "La URL del host es: $SONAR_HOST_URL"    
-      # - uses: actions/checkout@v4
-      #   with:
-      #     fetch-depth: 0
-      # - name: Run tests with coverage
-      #   run: |
-      #     go test -coverprofile=coverage.out ./...
-      # - uses: sonarsource/sonarqube-scan-action@master
+      # - name: Debug Environment Variables
       #   env:
       #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}  
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      #   run: |
+      #     echo "La URL del host es: $SONAR_HOST_URL"    
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run tests with coverage
+        run: |
+          go test -coverprofile=coverage.out ./...
+      - uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}  
