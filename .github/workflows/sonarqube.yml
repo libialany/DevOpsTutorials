@@ -15,10 +15,26 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.27.1'
-      - name: Run tests
+      - name: Run tests golang app
         run: go test ./...
       
       - name: Run tests with coverage
         run: |
           go test -coverprofile=coverage.out ./...
-  
+
+  sast-check:
+    needs: test-go
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: on
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23.1'
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: ./...
