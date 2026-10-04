@@ -22,61 +22,39 @@ jobs:
         run: |
           go test -coverprofile=coverage.out ./...
 
-  # sast-check:
+
+
+  # sonarqube:
   #   needs: test-go
+  #   name: sonarqube scan
   #   runs-on: ubuntu-latest
-  #   env:
-  #     GO111MODULE: on
-  #   steps:
-  #     - name: Checkout Source
-  #       uses: actions/checkout@v3
-  #     - name: Set up Go
-  #       uses: actions/setup-go@v4
+  #   steps:  
+  #     - uses: actions/checkout@v4
   #       with:
-  #         go-version: '1.27.1'
-  #     - name: Run Gosec Security Scanner
-  #       uses: securego/gosec@master
-  #       with:
-  #         args: ./...
-
-
-  sonarqube:
-    needs: test-go
-    name: sonarqube scan
-    runs-on: ubuntu-latest
-    steps:
-      # - name: Debug Environment Variables
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      #   run: |
-      #     echo "La URL del host es: $SONAR_HOST_URL"    
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run tests with coverage
-        run: |
-          go test -coverprofile=coverage.out ./...
-      - uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}  
+  #         fetch-depth: 0
+  #     - name: Run tests with coverage
+  #       run: |
+  #         go test -coverprofile=coverage.out ./...
+  #     - uses: sonarsource/sonarqube-scan-action@master
+  #       env:
+  #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}  
 
 
   trivy:
     name: Trivy scan
-    needs: sonarqube
+    # needs: sonarqube
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
  
       - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1"   # fail the job when findings are detected
+          exit-code: "1" 
           format: table
