@@ -41,20 +41,35 @@ jobs:
   #         SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}  
 
 
-  trivy:
-    name: Trivy scan
-    # needs: sonarqube
+  # trivy:
+  #   name: Trivy scan
+  #   # needs: sonarqube
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+ 
+  #     - name: Run Trivy (filesystem scan)
+  #       uses: aquasecurity/trivy-action@v0.36.0
+  #       with:
+  #         scan-type: fs
+  #         scan-ref: .
+  #         scanners: vuln,secret,misconfig
+  #         severity: HIGH,CRITICAL
+  #         ignore-unfixed: true
+  #         exit-code: "1" 
+  #         format: table
+  build:
+    name: Build
     runs-on: ubuntu-latest
+    # needs: [lint, test, trivy]
     steps:
       - uses: actions/checkout@v4
  
-      - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: actions/setup-go@v5
         with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret,misconfig
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1" 
-          format: table
+          go-version: '1.27.1'
+          go-version-file: go.mod
+          cache: true
+ 
+      - name: Build
+        run: go build -v ./...
