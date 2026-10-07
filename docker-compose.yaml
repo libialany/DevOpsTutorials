@@ -1,0 +1,18 @@
+services:
+  jaeger:
+    image: jaegertracing/jaeger:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      JAEGER_OTLP_GRPC_ENDPOINT: "0.0.0.0:4318"
+
+  collector:
+    image: otel/opentelemetry-collector:latest
+    ports:
+      - "4317:4317"
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    command: ["--config", "/etc/otel-collector-config.yaml"]
+    depends_on:
+      - jaeger
