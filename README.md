@@ -1,10 +1,34 @@
-# Pipeline de CI/CD (Go + SonarQube + Trivy)
+## Containers with Image SigninG
 
 
-## What Problem Does It Solve?
 
-Before CI/CD existed, software deployment was manual, slow, and stressful. Here are the core problems CI/CD completely solves:
+## Setup
+**On screen:** terminal. Type the commands.
+```bash
+docker build -t localhost:5000/demo:v1 .
+docker push localhost:5000/demo:v1
+```
 
-## Solution
+## Sign and verify
 
-Continuous Delivery/Deployment (CD) automates the entire release process. The deployment steps are written in code (like your GitHub Actions YAML file) and executed exactly the same way every time, removing human mistakes entirely
+```bash
+cosign generate-key-pair
+cosign sign --key cosign.key --tlog-upload=false $DIGEST
+cosign verify --key cosign.pub --signing-config signing-config.json  $DIGEST
+
+```
+## Change the image 
+
+```bash
+# Dockerfile now says: echo "I am malware"
+docker build -t localhost:5000/demo:v1 .
+docker push localhost:5000/demo:v1
+cosign verify --key cosign.pub --insecure-ignore-tlog=true $EVIL
+```
+
+###  Enforce it
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true $DIGEST \
+  && docker run --rm $DIGEST
+```
