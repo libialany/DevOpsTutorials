@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-ghcr-signature
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  background: false
+  rules:
+    - name: verify-demo-image
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [default]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/$USER/demo*"
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      ..
+                      ...
+                      -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true

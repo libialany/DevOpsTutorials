@@ -25,3 +25,45 @@ docker build -f Dockerfile.bad -t ghcr.io/$GH_USER/demo:v4 . && docker push ghcr
 EVIL=$(docker buildx imagetools inspect ghcr.io/$GH_USER/demo:v4 --format '{{json .Manifest.Digest}}' | tr -d '"')
 cosign verify --key cosign.pub --insecure-ignore-tlog=true $EVIL
 ```
+
+
+# kyverno
+
+Kyverno is a policy engine for Kubernetes that can be used to enforce security policies. One of the ways that Kyverno can be used is to require that all container images deployed to a Kubernetes cluster be signed.
+
+![How to install](https://medium.com/@sddkal/use-cosign-and-kyverno-for-enforcing-image-signing-dff43bc959df)
+
+## Example
+
+1. pull secrets from namespaces:
+```
+# For Kyverno to fetch the signature
+kubectl create secret docker-registry ghcr-creds -n kyverno \
+  --docker-server=ghcr.io \
+  --docker-username=$GH_USER \
+  --docker-password=$READ_PAT
+
+# For the kubelet to pull the image
+kubectl create secret docker-registry ghcr-creds -n default \
+  --docker-server=ghcr.io \
+  --docker-username=$GH_USER \
+  --docker-password=$READ_PAT
+```
+
+2. Create the sign images policies
+
+[policy](./verify-ghcr-signature.yaml)
+
+```
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-ghcr-signature
+  ..............
+```
+
+3. test it.
+
+```
+kubectl run evil --image=ghcr.io/$GH_USER/demo:v<replace> # replace with v3 and v4
+```
