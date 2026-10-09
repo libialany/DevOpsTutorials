@@ -3,32 +3,25 @@
 
 
 ## Setup
-**On screen:** terminal. Type the commands.
+
 ```bash
-docker build -t localhost:5000/demo:v1 .
-docker push localhost:5000/demo:v1
+docker build -f Dockerfile.good -t ghcr.io/$GH_USER/demo:v3 . && docker push ghcr.io/$GH_USER/demo:v3
+DIGEST=$(docker buildx imagetools inspect ghcr.io/$GH_USER/demo:v3 --format '{{json .Manifest.Digest}}' | tr -d '"')
 ```
 
 ## Sign and verify
 
 ```bash
 cosign generate-key-pair
-cosign sign --key cosign.key --tlog-upload=false $DIGEST
-cosign verify --key cosign.pub --signing-config signing-config.json  $DIGEST
-
+cosign sign --key cosign.key ghcr.io/$GH_USER/demo@$DIGEST --new-bundle-format=false --use-signing-config=false
+cosign verify --key cosign.pub ghcr.io/$GH_USER/demo@$DIGEST
 ```
+
 ## Change the image 
 
 ```bash
 # Dockerfile now says: echo "I am malware"
-docker build -t localhost:5000/demo:v1 .
-docker push localhost:5000/demo:v1
+docker build -f Dockerfile.bad -t ghcr.io/$GH_USER/demo:v4 . && docker push ghcr.io/$GH_USER/demo:v4
+EVIL=$(docker buildx imagetools inspect ghcr.io/$GH_USER/demo:v4 --format '{{json .Manifest.Digest}}' | tr -d '"')
 cosign verify --key cosign.pub --insecure-ignore-tlog=true $EVIL
-```
-
-###  Enforce it
-
-```bash
-cosign verify --key cosign.pub --insecure-ignore-tlog=true $DIGEST \
-  && docker run --rm $DIGEST
 ```
