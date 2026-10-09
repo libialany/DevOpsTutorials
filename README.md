@@ -31,7 +31,7 @@ cosign verify --key cosign.pub --insecure-ignore-tlog=true $EVIL
 
 Kyverno is a policy engine for Kubernetes that can be used to enforce security policies. One of the ways that Kyverno can be used is to require that all container images deployed to a Kubernetes cluster be signed.
 
-![How to install](https://medium.com/@sddkal/use-cosign-and-kyverno-for-enforcing-image-signing-dff43bc959df)
+[How to install](https://medium.com/@sddkal/use-cosign-and-kyverno-for-enforcing-image-signing-dff43bc959df)
 
 ## Example
 
@@ -60,6 +60,12 @@ kind: ClusterPolicy
 metadata:
   name: verify-ghcr-signature
   ..............
+```
+
+and then 
+
+```
+k apply -f policy.yaml
 ```
 
 3. test it.
