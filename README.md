@@ -7,6 +7,7 @@
 ```bash
 docker build -f Dockerfile.good -t ghcr.io/$GH_USER/demo:v3 . && docker push ghcr.io/$GH_USER/demo:v3
 DIGEST=$(docker buildx imagetools inspect ghcr.io/$GH_USER/demo:v3 --format '{{json .Manifest.Digest}}' | tr -d '"')
+echo $DIGEST
 ```
 
 ## Sign and verify
