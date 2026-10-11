@@ -37,7 +37,7 @@ docker push "$IMAGE_URI"
 
 ## Configure the scan on the image 
 
-[complete file](.github/workflows/snyk.yml)
+[complete file](.github/workflows/snyk.yaml)
 
 ```
       # 5. Set up Snyk CLI
