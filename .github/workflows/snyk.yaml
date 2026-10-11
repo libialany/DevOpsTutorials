@@ -47,13 +47,26 @@ jobs:
       - name: Set up Snyk CLI
         uses: snyk/actions/setup@master
 
-      # 6. Scan container image
-      - name: Snyk Container Scan
+        # 6. Scan container image
+      - name: Run Snyk to check Docker image for vulnerabilities
+        uses: snyk/actions/docker@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: |
-          snyk container test \
-            "${ECR_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" \
-            --severity-threshold=high \
-            --project-name="${IMAGE_NAME}"
+        with:
+           image: ${{ env.IMAGE_NAME }}
+           args: --severity-threshold=high --policy-path=.snyk
+        continue-on-error: false
+
+
+
+
+
+
+
+
+
+
+
+
+
 
