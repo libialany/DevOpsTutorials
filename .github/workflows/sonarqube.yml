@@ -1,10 +1,6 @@
 name: Sonar qube analysis
 on:
-  push: 
-    branches: [ tutorial-1 ]
-  pull_request:
-    branches: [ tutorial-1 ]
-
+  workflow_dispatch:
 jobs:
   test-go:
     runs-on: ubuntu-latest
