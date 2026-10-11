@@ -2,7 +2,15 @@ name: Snyk Container Scan - ECR image
 
 on:
   workflow_dispatch:
-
+    inputs:
+      environment:
+        description: "Target environment"
+        required: false
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
 
 permissions:
   contents: read
