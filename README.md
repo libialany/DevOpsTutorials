@@ -1,48 +1,88 @@
-## Applications in ArgoCD
+# ArgoCD AppProject
 
+## Create the appProject
 
-Deploy an application with ArgoCD using private repositories, and how to auth to that repo is pass the credentials using this command:
+An **AppProject** limits which repos an Application can pull from, which clusters and namespaces it can deploy to, and which resource kinds it can create.
 
-```bash
-argocd repo add https://github.com/YOUR_ORG/argocd-config.git \
-  --username YOUR_USER --password YOUR_TOKEN
-```
-
-or:
-
-```bash
-argocd repo add https://github.com/YOUR_ORG/my-app-manifests.git \
-  --username YOUR_USER --password YOUR_TOKEN
-```
-
-## Define the demo-app Application
+Example:
 
 ```yaml
-# apps/demo-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: demo-project
+  namespace: argocd
+spec:
+  description: Project restricted to the demo namespace
+
+  # Only allow this source repo
+  sourceRepos:
+    - https://github.com/YOUR_ORG/my-app-manifests.git
+
+  # Only allow deploying to the demo namespace of the local cluster
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: demo
+
+  # Namespaced resources allowed (empty = allow all kinds inside demo)
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ConfigMap
+
+  # Block cluster-wide resources (Namespace, ClusterRole, CRDs, etc.)
+  clusterResourceWhitelist: []
+```
+
+## 2. Important: `CreateNamespace=true` needs a small change
+
+Because `clusterResourceWhitelist` is empty, ArgoCD **cannot create the `demo` namespace** (Namespace is a cluster-scoped resource). You have two options.
+
+Create the Namespace kind at cluster level:
+
+```yaml
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+```
+
+## 3. Use the project in your Application
+
+```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: demo-app
   namespace: argocd
 spec:
-  project: default
-  source:
-    repoURL: https://github.com/YOUR_ORG/my-app-manifests.git
-    targetRevision: main
-    path: manifests
+  project: demo-project ## Here
+..
+```
+
+## 4. Test That It Blocks Other Namespaces
+
+Change the Application destination to a different namespace:
+
+```yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: demo
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
+    namespace: production     # change and watch
 ```
 
-```bash
-kubectl apply -f root-app.yaml
+ArgoCD will refuse because:
+
+
+```
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: demo
 ```
 
-ArgoCD syncs it automatically.
+## Notes
+
+- **The `default` project allows everything.** Avoid using it in production, and create restricted projects like this one.
+- **Order matters with App-of-Apps:** the AppProject must exist before the Application that uses it. Use sync waves to be safe:
+
