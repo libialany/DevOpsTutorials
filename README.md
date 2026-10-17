@@ -1,5 +1,13 @@
 # ArgoCD AppProject
 
+## Why it Matter
+
+1. POLICIES: An app in `demo-project` can only deploy to the `demo` namespace, so a typo or a bad commit can't touch `production` or `kube-system`.
+
+2. TRUST REPOS `sourceRepos` ensures that only approved Git repositories can be used as a source, which stops someone from deploying manifests from an unknown repo.
+
+3. They restrict what resource kinds can be created.
+
 ## Create the appProject
 
 An **AppProject** limits which repos an Application can pull from, which clusters and namespaces it can deploy to, and which resource kinds it can create.
