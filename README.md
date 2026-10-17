@@ -6,22 +6,46 @@ A **project role** is a set of permissions scoped to one AppProject. You attach 
 
 ## 1. create a rol
 
-```yaml
-roles:
-- name: ci-role
-  description: Sync privileges for project-with-role
-  policies:
-  - p, proj:project-with-role:ci-role, applications, sync, project-with-role/*, allow
-  - p, proj:project-with-role:ci-role, applications, get, project-with-role/*, allow
+in argocd
 ```
-
-Format:
+kubectl edit configmap argocd-cm -n argocd
+```
+and then add:
 
 ```
-p, <subject>, <resource>, <action>, <object>, <effect>
+data:
+  accounts.developer: apiKey, logins
 ```
 
-So `ci-role` can **view** and **sync** apps in `project-with-role`, and nothing else. It cannot delete, update, or create apps, and it has no access to other projects.
+create a password:
+
+```bash
+argocd account update-password \
+  --account developer
+```
+assign permissions to the user:
+
+```
+kubectl edit configmap argocd-rbac-cm -n argocd
+```
+in the terminal:
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-rbac-cm
+  namespace: argocd
+data:
+  policy.csv: |
+    p, proj:app-project:developer, applications, get, app-project/*, allow
+```
+finally you need to create a token. You must be logged in as admin:
+
+```bash
+argocd login localhost:8080 --username admin --password <PASSWORD> --insecure
+
+argocd proj role create-token app-project developer --expires-in 24h
+```
 
 ## 2. Create a Project
 
@@ -30,16 +54,25 @@ So `ci-role` can **view** and **sync** apps in `project-with-role`, and nothing 
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: project-with-role
+  name: app-project
   namespace: argocd
     ...........................
   roles:
-  - name: ci-role
-    description: Sync privileges for project-with-role
+  - name: developer
+    description: Sync privileges for app-project
     policies:
-    - p, proj:project-with-role:ci-role, applications, sync, project-with-role/*, allow
-    - p, proj:project-with-role:ci-role, applications, get, project-with-role/*, allow
+    - p, proj:app-project:developer, applications, sync, app-project/*, allow
+    - p, proj:app-project:developer, applications, get, app-project/*, allow
 ```
+
+Format explained:
+
+```
+p, <subject>, <resource>, <action>, <object>, <effect>
+```
+
+So `developer` can **view** and **sync** apps in `app-project`, and nothing else. It cannot delete, update, or create apps, and it has no access to other projects.
+
 
 ## 3. Create an Application
 
@@ -50,7 +83,7 @@ metadata:
   name: demo
   namespace: argocd
 spec:
-  project: project-with-role #### HERE COMES THE PROJECT
+  project: app-project
   source:
     repoURL: https://github.com/YOUR_ORG/my-app-manifests.git
     targetRevision: main
@@ -62,25 +95,14 @@ spec:
     syncOptions:
       - CreateNamespace=true
 ```
-## Generate the Token
-
-You must be logged in as admin:
-
-```bash
-argocd login localhost:8080 --username admin --password <PASSWORD> --insecure
-
-argocd proj role create-token project-with-role ci-role --expires-in 24h
-
-```
-
 ## 4. Use the token
 
 ```bash
 # Allowed: get
-argocd app get demo --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
+argocd app get app2 --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
 
 # Allowed: sync
-argocd app sync demo --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
+argocd app sync app2 --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
 ```
 
 
