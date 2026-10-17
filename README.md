@@ -1,96 +1,86 @@
-# ArgoCD AppProject
+## ArgoCD AppProject Roles: Demo with a CI Token
 
-## Why it Matter
+## Why it matters
 
-1. POLICIES: An app in `demo-project` can only deploy to the `demo` namespace, so a typo or a bad commit can't touch `production` or `kube-system`.
+A **project role** is a set of permissions scoped to one AppProject. You attach policies to the role, then generate a **JWT token** for it. A CI pipeline can use that token instead of the admin password.
 
-2. TRUST REPOS `sourceRepos` ensures that only approved Git repositories can be used as a source, which stops someone from deploying manifests from an unknown repo.
+## 1. create a rol
 
-3. They restrict what resource kinds can be created.
+```yaml
+roles:
+- name: ci-role
+  description: Sync privileges for project-with-role
+  policies:
+  - p, proj:project-with-role:ci-role, applications, sync, project-with-role/*, allow
+  - p, proj:project-with-role:ci-role, applications, get, project-with-role/*, allow
+```
 
-## Create the appProject
+Format:
 
-An **AppProject** limits which repos an Application can pull from, which clusters and namespaces it can deploy to, and which resource kinds it can create.
+```
+p, <subject>, <resource>, <action>, <object>, <effect>
+```
 
-Example:
+So `ci-role` can **view** and **sync** apps in `project-with-role`, and nothing else. It cannot delete, update, or create apps, and it has no access to other projects.
+
+## 2. Create a Project
+
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: demo-project
+  name: project-with-role
   namespace: argocd
-spec:
-  description: Project restricted to the demo namespace
-
-  # Only allow this source repo
-  sourceRepos:
-    - https://github.com/YOUR_ORG/my-app-manifests.git
-
-  # Only allow deploying to the demo namespace of the local cluster
-  destinations:
-    - server: https://kubernetes.default.svc
-      namespace: demo
-
-  # Namespaced resources allowed (empty = allow all kinds inside demo)
-  namespaceResourceWhitelist:
-    - group: "apps"
-      kind: Deployment
-    - group: ""
-      kind: Service
-    - group: ""
-      kind: ConfigMap
-
-  # Block cluster-wide resources (Namespace, ClusterRole, CRDs, etc.)
-  clusterResourceWhitelist: []
+    ...........................
+  roles:
+  - name: ci-role
+    description: Sync privileges for project-with-role
+    policies:
+    - p, proj:project-with-role:ci-role, applications, sync, project-with-role/*, allow
+    - p, proj:project-with-role:ci-role, applications, get, project-with-role/*, allow
 ```
 
-## 2. Important: `CreateNamespace=true` needs a small change
-
-Because `clusterResourceWhitelist` is empty, ArgoCD **cannot create the `demo` namespace** (Namespace is a cluster-scoped resource). You have two options.
-
-Create the Namespace kind at cluster level:
-
-```yaml
-  clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
-```
-
-## 3. Use the project in your Application
+## 3. Create an Application
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: demo-app
+  name: demo
   namespace: argocd
 spec:
-  project: demo-project ## Here
-..
-```
-
-## 4. Test That It Blocks Other Namespaces
-
-Change the Application destination to a different namespace:
-
-```yaml
+  project: project-with-role #### HERE COMES THE PROJECT
+  source:
+    repoURL: https://github.com/YOUR_ORG/my-app-manifests.git
+    targetRevision: main
+    path: manifests
   destination:
     server: https://kubernetes.default.svc
-    namespace: production     # change and watch
+    namespace: demo
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+```
+## Generate the Token
+
+You must be logged in as admin:
+
+```bash
+argocd login localhost:8080 --username admin --password <PASSWORD> --insecure
+
+argocd proj role create-token project-with-role ci-role --expires-in 24h
+
 ```
 
-ArgoCD will refuse because:
+## 4. Use the token
 
+```bash
+# Allowed: get
+argocd app get demo --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
 
+# Allowed: sync
+argocd app sync demo --grpc-web --server localhost:8080 --insecure --auth-token $TOKEN_VALUE
 ```
-  destinations:
-    - server: https://kubernetes.default.svc
-      namespace: demo
-```
 
-## Notes
-
-- **The `default` project allows everything.** Avoid using it in production, and create restricted projects like this one.
-- **Order matters with App-of-Apps:** the AppProject must exist before the Application that uses it. Use sync waves to be safe:
 
