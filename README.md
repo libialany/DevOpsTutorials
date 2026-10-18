@@ -2,8 +2,6 @@
 
 A **PostSync hook** is a Kubernetes Job that Argo CD runs **after** all resources are synced and **Healthy**. If the Job fails, the sync is marked as failed, so you know the deployment is broken.
 
-Since you don't have an app, we'll use a simple NGINX app plus a check Job that curls it.
-
 ## Repo Structure
 
 ```
