@@ -1,37 +1,99 @@
-## ArgoCD with Helm
+# ArgoCD PostSync Hook: Post-Deployment
 
-### Why Helm Charts with Argo CD and GitOps Matter
+A **PostSync hook** is a Kubernetes Job that Argo CD runs **after** all resources are synced and **Healthy**. If the Job fails, the sync is marked as failed, so you know the deployment is broken.
 
-1. **Reuse instead of rewriting.** Public charts (like Bitnami's NGINX) package a Deployment, Service, and more, already tested by the community. You deploy with a few lines of YAML instead of maintaining dozens of manifests.
+Since you don't have an app, we'll use a simple NGINX app plus a check Job that curls it.
 
-2. **Configuration lives in Git as values.** Instead of editing templates, you override only what you need (replicas, service type, image) in `values`. Every change is a Git commit, so you get history, review, and easy rollback.
+## Repo Structure
 
-3. **Argo CD makes Helm declarative and drift-proof.** Argo CD renders the chart itself (using `helm template`), compares it to the cluster, and with auto-sync and self-heal it keeps the cluster matching Git. No more manual `helm upgrade` commands, and no hidden state.
+```
+my-app-manifests/
+└── postsync-demo/
+    ├── deployment.yaml
+    ├── service.yaml
+    └── postsync-check.yaml
+```
 
-### Create the Application
+## The Application services
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:does-not-exist  #nginx:1.27
+          ports:
+            - containerPort: 80
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 80
+```
+
+## Health Check Job
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: web-healthcheck
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: check
+          image: curlimages/curl:8.10.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Checking web service..."
+              curl -sf --retry 5 --retry-delay 3 --retry-connrefused http://web/ \
+                && echo "Health check PASSED" \
+                || (echo "Health check FAILED" && exit 1)
+```
+
+## The Application
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: nginx-helm
+  name: postsync-demo
   namespace: argocd
-#helm show chart oci://registry-1.docker.io/bitnamicharts/nginx
 spec:
   project: default
   source:
-    repoURL: registry-1.docker.io/bitnamicharts   # OCI registry (no oci:// prefix)
-    chart: nginx
-    targetRevision: 18.2.0                        # chart version: pin it!
-    helm:
-      releaseName: nginx
-      valuesObject:
-        replicaCount: 2
-        service:
-          type: ClusterIP
+    repoURL: https://github.com/YOUR_ORG/my-app-manifests.git
+    targetRevision: main
+    path: postsync-demo
   destination:
     server: https://kubernetes.default.svc
-    namespace: nginx-demo
+    namespace: postsync-demo
   syncPolicy:
     automated:
       prune: true
@@ -41,53 +103,9 @@ spec:
 ```
 
 ```bash
-argocd repo add registry-1.docker.io/bitnamicharts --type helm --name bitnami-oci --enable-oci
+kubectl apply -f postsync-app.yaml
+argocd app get postsync-demo
+kubectl get pods -n postsync-demo -w
 ```
 
-### Apply
-
-```bash
-kubectl apply -f nginx-helm-app.yaml
-
-argocd app get nginx-helm
-kubectl get pods -n nginx-demo
-kubectl get svc -n nginx-demo
-```
-
-### Test
-
-```bash
-kubectl port-forward svc/nginx -n nginx-demo 8081:80
-curl http://localhost:8081
-```
-
-### Pass values thougth values
-
-```yaml
-spec:
-  sources:
-    - repoURL: registry-1.docker.io/bitnamicharts
-      chart: nginx
-      targetRevision: 18.2.0
-      helm:
-        releaseName: nginx
-        valueFiles:
-          - $values/nginx/values.yaml
-    - repoURL: https://github.com/YOUR_ORG/my-app-manifests.git
-      targetRevision: main
-      ref: values                    # makes this repo available as $values
-```
-
-`nginx/values.yaml` in your Git repo:
-
-```yaml
-replicaCount: 3
-service:
-  type: ClusterIP
-```
-
-```bash
-kubectl scale deployment nginx -n nginx-demo --replicas=10
-# Argo CD reverts it to the value in Git
-```
 
