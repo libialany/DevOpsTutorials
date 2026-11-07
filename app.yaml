@@ -1,49 +1,18 @@
 apiVersion: argoproj.io/v1alpha1
-kind: ApplicationSet
-metadata:
-  name: webapp-preview
+kind: Application
+metadata: 
+  name: simplecicd
   namespace: argocd
 spec:
-  goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
-  generators:
-    - pullRequest:
-        github:
-          owner: libialany
-          repo: argocd-course-webapp
-          tokenRef:
-            secretName: github-token
-            key: token
-          labels:
-            - preview
-        requeueAfterSeconds: 60
-  template:
-    metadata:
-      name: 'webapp-pr-{{.number}}'
-      labels:
-        managed-by: applicationset
-        generator: pull-request
-        preview: "true"
-      annotations:
-        preview.example.com/pr: '{{.number}}'
-        preview.example.com/branch: '{{.branch}}'
-        preview.example.com/sha: '{{.head_sha}}'
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
-    spec:
-      project: default
-      source:
-        repoURL: https://github.com/libialany/argocd-course-webapp.git
-        targetRevision: '{{.head_sha}}'
-        path: helm/webapp
-        helm:
-          releaseName: 'webapp-pr-{{.number}}'
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: 'pr-{{.number}}'
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=true
+  destination:
+    namespace: webapp
+    server: "https://kubernetes.default.svc"
+  project: default
+  source: 
+    path: helm/webapp
+    repoURL: "https://github.com/libialany/argocd-course-webapp-config.git"
+    targetRevision: main
+  syncPolicy:
+    automated: {}
+    syncOptions:
+      - CreateNamespace=true
