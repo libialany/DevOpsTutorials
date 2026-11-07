@@ -1,168 +1,116 @@
-# 30. ApplicationSet - Git Directory Generator
+# 31. ApplicationSet - Matrix Generator
 
 ## Introduction
 
-The **git generator** scans a Git repository and generates Applications from what
-it finds there. It has two modes:
+The **matrix generator** combines two or more child generators and produces the
+**cartesian product** of their results. If the first generator yields 3
+applications (from Git directories) and the second yields 4 clusters, the matrix
+generator yields 12 parameter sets, and therefore 12 Applications.
 
-- **Files generator** - one Application per JSON/YAML file.
-- **Directory generator** - one Application per directory matching a glob.
+Conceptually:
 
-This exercise uses the **directory generator**. The generator clones the
-repository, finds directories matching patterns such as `apps/*`, and exposes the
-directory path as parameters. The Application template uses that path as both the
-source path and, in this exercise, the Application name and namespace.
+```
+matrix = generatorA x generatorB
+```
+
+Each generated parameter set contains the union of the parameters from both
+generators. Template fields can therefore reference values from either side, for
+example `{{.path.basename}}` from a git generator and `{{.name}}` /
+`{{.server}}` from a cluster generator.
 
 **Why it exists**
 
-- The repository layout becomes the source of truth for the application list.
-- Adding a new app is as simple as adding a directory containing a Helm chart or
-  manifests; no ApplicationSet edit is required.
-- Removes the need to keep a list generator in sync with the repository.
-- Enables self-service: a team adds a directory and the platform automatically
-  deploys it.
+- Deploy every app to every cluster without writing N x M manifests.
+- Express fleet-wide rollout patterns (all platform add-ons to all clusters).
 
-### How the directory generator works
+**When to use it**
 
-The generator performs these steps on every reconciliation:
+- You have a set of applications defined in Git and a set of target clusters
+  defined in Argo CD.
+- You want to layer selection: for example only `env=prod` clusters and only
+  `apps/*` directories.
 
-1. Clones/fetches the repository at the requested revision.
-2. Expands the `directories` patterns (`*` matches within one segment, `**`
-   matches across segments).
-3. Applies `exclude` patterns if present.
-4. Renders the template once per matching directory.
+**When not to use it**
 
-Available parameters include:
+- The two lists are the same length and should be paired one-to-one (app A to
+  cluster A, app B to cluster B). A matrix produces all combinations; use a list
+  generator with explicit pairs, or a merge generator.
 
-| Parameter | Example for `apps/payments-api` | Notes |
-|-----------|-------------------------------|-------|
-| `path.path` | `apps/payments-api` | Repository-relative directory |
-| `path.basename` | `payments-api` | Last path segment |
-| `path.basenameNormalized` | `payments-api` | Safe for Kubernetes names |
-| `path.segments` | `[apps, payments-api]` | List of segments |
-| `path[0]`, `path[1]` | `apps`, `payments-api` | Indexed access |
+### Matrix vs merge generator
 
-Use `basenameNormalized` when directory names may contain characters that are
-invalid in Kubernetes resource names (underscores, dots, uppercase letters).
+- **Matrix** produces the cartesian product (N x M).
+- **Merge** joins results by a common key, producing N rows enriched with data
+  from a second generator (a "left join"). Use merge when cluster metadata should
+  be attached to a specific app rather than multiplied across all apps.
 
 ## Implementation
 
-### 1. Create the repository layout and app charts
-
-#### `apps/nginx/Chart.yaml`
-
-```yaml
-apiVersion: v2
-name: nginx
-description: Minimal application chart used by the git directory generator lab
-type: application
-version: 0.1.0
-appVersion: "1.27"
-```
-
-#### `apps/nginx/values.yaml`
-
-```yaml
-replicaCount: 1
-
-image:
-  repository: nginx
-  tag: "1.27-alpine"
-  pullPolicy: IfNotPresent
-
-containerPort: 80
-
-service:
-  type: ClusterIP
-  port: 80
-
-env: []
-
-resources: {}
-```
-
-#### `apps/nginx/templates/deployment.yaml`
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ .Release.Name }}
-  labels:
-    app.kubernetes.io/name: {{ .Chart.Name }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-spec:
-  replicas: {{ .Values.replicaCount }}
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: {{ .Chart.Name }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: {{ .Chart.Name }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
-    spec:
-      containers:
-        - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: tcp
-              containerPort: {{ .Values.containerPort }}
-              protocol: TCP
-          {{- with .Values.env }}
-          env:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- with .Values.resources }}
-          resources:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-```
-
-
-Validate the charts before pushing:
+### 1. Register clusters with labels
 
 ```bash
-helm lint apps/nginx
-helm template nginx apps/nginx
+argocd cluster add kind-dev  --name dev  --label env=dev  -y
+argocd cluster add kind-prod --name prod --label env=prod -y
+argocd cluster list
 ```
 
-Push the repository and note its URL and branch.
+For this exercise, target all registered clusters (including `in-cluster` if
+present). If you want only the remote clusters, label them with a common label
+and select it.
 
-### 2. Create the ApplicationSet
+### 2. Create the repository layout
 
-Create `appsets/git-directory.yaml`:
+```
+charts-repo/
+└── apps/
+    ├── nginx/
+    │   ├── Chart.yaml
+    │   ├── values.yaml
+    │   └── templates/
+    ├── redis/
+    │   ├── Chart.yaml
+    │   ├── values.yaml
+    │   └── templates/
+    └── postgresql/
+        ├── Chart.yaml
+        ├── values.yaml
+        └── templates/
+```
+
+Each directory is a Helm chart. Push the repository.
+
+### 3. Create the matrix ApplicationSet
+
+Create `appsets/matrix.yaml`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: git-directory-apps
+  name: matrix-apps
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - git:
-        repoURL: https://github.com/<your-org>/<your-repo>.git
-        revision: HEAD
-        directories:
-          - path: apps/*
-        # Add exclusions with:
-        #   - path: apps/experimental/*
-        #     exclude: true
-        # The directory generator cannot test file contents, so keep the
-        # repository layout predictable instead.
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  env: dev
+          - git:
+              repoURL: https://github.com/<your-org>/<your-repo>.git
+              revision: HEAD
+              directories:
+                - path: apps/*
   template:
     metadata:
-      name: '{{.path.basename}}'
+      name: '{{.path.basename}}-{{.name}}'
       labels:
         managed-by: applicationset
-        generator: git-directory
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
+        generator: matrix
+        app: '{{.path.basename}}'
+        cluster: '{{.name}}'
     spec:
       project: default
       source:
@@ -172,7 +120,7 @@ spec:
         helm:
           releaseName: '{{.path.basenameNormalized}}'
       destination:
-        server: https://kubernetes.default.svc
+        server: '{{.server}}'
         namespace: '{{.path.basename}}'
       syncPolicy:
         automated:
@@ -182,14 +130,13 @@ spec:
           - CreateNamespace=true
 ```
 
-A real exclusion looks like:
+The child generator order is not important for the result, but it is conventional
+to put clusters first and the Git directory generator second.
 
-```yaml
-directories:
-  - path: apps/*
-  - path: apps/experimental/*
-    exclude: true
+```bash
+kubectl apply -f appsets/matrix.yaml
+kubectl -n argocd get applications
+argocd app sync nginx-dev
+argocd app wait nginx-dev --health
 ```
 
-The repository URL in the generator and in the template must match. Use a
-read-only deploy key or a repository that Argo CD can clone anonymously.

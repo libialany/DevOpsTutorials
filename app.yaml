@@ -1,25 +1,31 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: git-directory-apps
+  name: matrix-apps
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - git:
-        repoURL: https://github.com/libialany/argocd-apps.git
-        revision: HEAD
-        directories:
-          - path: apps/*
+    - matrix:
+        generators:
+          - clusters: {}
+              # selector:
+              #   matchLabels:
+              #     env: dev
+          - git:
+              repoURL: https://github.com/libialany/argocd-apps.git
+              revision: HEAD
+              directories:
+                - path: apps/*
   template:
     metadata:
-      name: '{{.path.basename}}'
+      name: '{{.path.basename}}-{{.name}}'
       labels:
         managed-by: applicationset
-        generator: git-directory
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
+        generator: matrix
+        app: '{{.path.basename}}'
+        cluster: '{{.name}}'
     spec:
       project: default
       source:
@@ -29,7 +35,7 @@ spec:
         helm:
           releaseName: '{{.path.basenameNormalized}}'
       destination:
-        server: https://kubernetes.default.svc
+        server: '{{.server}}'
         namespace: '{{.path.basename}}'
       syncPolicy:
         automated:
