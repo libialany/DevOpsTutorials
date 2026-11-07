@@ -1,18 +1,28 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-metadata: 
-  name: simplecicd
+metadata:
+  name: root-app-directory-approach
   namespace: argocd
 spec:
   destination:
-    namespace: webapp
-    server: "https://kubernetes.default.svc"
+    namespace: argocd
+    server: https://kubernetes.default.svc
+  ignoreDifferences:
+  - group: argoproj.io
+    jsonPointers:
+    - /status
+    kind: Application
   project: default
-  source: 
-    path: helm/webapp
-    repoURL: "https://github.com/libialany/argocd-course-webapp-config.git"
+  source:
+    path: directory-of-apps
+    repoURL: https://github.com/libialany/argocd-course-app-of-apps.git
     targetRevision: main
+    directory:
+      recurse: true
   syncPolicy:
-    automated: {}
+    automated:
+      allowEmpty: true
+      selfHeal: true
     syncOptions:
-      - CreateNamespace=true
+    - allowEmpty=true
+    - CreateNamespace=true
