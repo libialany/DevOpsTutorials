@@ -1,35 +1,36 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: podinfo-all-clusters
+  name: git-directory-apps
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - clusters:
-        selector:
-          matchLabels:
-            env: dev
-        values:
-          logLevel: debug
+    - git:
+        repoURL: https://github.com/libialany/argocd-apps.git
+        revision: HEAD
+        directories:
+          - path: apps/*
   template:
     metadata:
-      name: 'podinfo-{{.name}}'
+      name: '{{.path.basename}}'
       labels:
         managed-by: applicationset
-        generator: cluster
+        generator: git-directory
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       source:
-        repoURL: https://github.com/stefanprodan/podinfo.git
-        targetRevision: master
-        path: charts/podinfo
+        repoURL: https://github.com/libialany/argocd-apps.git
+        targetRevision: HEAD
+        path: '{{.path.path}}'
         helm:
-          releaseName: podinfo
+          releaseName: '{{.path.basenameNormalized}}'
       destination:
-        server: '{{.server}}'
-        namespace: podinfo
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
       syncPolicy:
         automated:
           prune: true

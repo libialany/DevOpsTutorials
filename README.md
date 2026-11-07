@@ -1,97 +1,179 @@
-# ApplicationSet - Cluster Generator
+# 30. ApplicationSet - Git Directory Generator
 
 ## Introduction
 
-The **cluster generator** produces parameters from the clusters registered in
-Argo CD. Instead of listing clusters by hand, the ApplicationSet controller
-reads the cluster Secrets managed by Argo CD and renders one Application per
-matching cluster.
+The **git generator** scans a Git repository and generates Applications from what
+it finds there. It has two modes:
 
-The generator supports **label selectors**, so the same ApplicationSet can target
-all clusters, a group of clusters (for example `env=dev`), or a single cluster.
-Each generated Application receives the cluster name, the API server URL, and
-the cluster's labels and annotations as template parameters.
+- **Files generator** - one Application per JSON/YAML file.
+- **Directory generator** - one Application per directory matching a glob.
+
+This exercise uses the **directory generator**. The generator clones the
+repository, finds directories matching patterns such as `apps/*`, and exposes the
+directory path as parameters. The Application template uses that path as both the
+source path and, in this exercise, the Application name and namespace.
 
 **Why it exists**
 
-- Deploys the same application to many clusters without duplicating manifests.
-- Uses cluster metadata (labels) as the selection mechanism, matching GitOps
-  promotion patterns such as dev, staging, and production.
-- Automatically adds Applications when a new cluster is registered and removes
-  them when it is deregistered.
-- Separates "what to deploy" (the template) from "where to deploy" (cluster
-  labels).
+- The repository layout becomes the source of truth for the application list.
+- Adding a new app is as simple as adding a directory containing a Helm chart or
+  manifests; no ApplicationSet edit is required.
+- Removes the need to keep a list generator in sync with the repository.
+- Enables self-service: a team adds a directory and the platform automatically
+  deploys it.
 
-**When to use it**
+### How the directory generator works
 
-- A platform component or add-on must run on every cluster.
-- A workload must run in a subset of clusters chosen by labels.
-- You manage a fleet of clusters and want centralized, consistent deployments.
+The generator performs these steps on every reconciliation:
+
+1. Clones/fetches the repository at the requested revision.
+2. Expands the `directories` patterns (`*` matches within one segment, `**`
+   matches across segments).
+3. Applies `exclude` patterns if present.
+4. Renders the template once per matching directory.
+
+Available parameters include:
+
+| Parameter | Example for `apps/payments-api` | Notes |
+|-----------|-------------------------------|-------|
+| `path.path` | `apps/payments-api` | Repository-relative directory |
+| `path.basename` | `payments-api` | Last path segment |
+| `path.basenameNormalized` | `payments-api` | Safe for Kubernetes names |
+| `path.segments` | `[apps, payments-api]` | List of segments |
+| `path[0]`, `path[1]` | `apps`, `payments-api` | Indexed access |
+
+Use `basenameNormalized` when directory names may contain characters that are
+invalid in Kubernetes resource names (underscores, dots, uppercase letters).
 
 ## Implementation
 
-### 1. Register remote clusters
+### 1. Create the repository layout and app charts
 
-In the Argo CD cluster (the cluster where Argo CD is installed):
-
-```bash
-argocd cluster add kind-cluster-2  --name cluster-2 --label env=dev -y
-argocd cluster add kind-prod --name prod --label env=prod --label region=eu -y
-argocd cluster list
-```
-
-To target **only remote clusters**, add a selector on the Secret label that the
-local cluster does not have:
+#### `apps/nginx/Chart.yaml`
 
 ```yaml
-selector:
-  matchLabels:
-    argocd.argoproj.io/secret-type: cluster
+apiVersion: v2
+name: nginx
+description: Minimal application chart used by the git directory generator lab
+type: application
+version: 0.1.0
+appVersion: "1.27"
 ```
 
-To give the local cluster labels, create a cluster Secret for it, or register it
-explicitly on recent versions:
+#### `apps/nginx/values.yaml`
+
+```yaml
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.27-alpine"
+  pullPolicy: IfNotPresent
+
+containerPort: 80
+
+service:
+  type: ClusterIP
+  port: 80
+
+env: []
+
+resources: {}
+```
+
+#### `apps/nginx/templates/deployment.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: tcp
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+```
+
+
+Validate the charts before pushing:
 
 ```bash
-argocd cluster add <context-name> --in-cluster --name in-cluster --label env=local
+helm lint apps/nginx
+helm template nginx apps/nginx
 ```
 
-### 2. Deploy to matching clusters only
+Push the repository and note its URL and branch.
 
-Create `appsets/cluster-dev.yaml`:
+### 2. Create the ApplicationSet
+
+Create `appsets/git-directory.yaml`:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: podinfo-dev-only
+  name: git-directory-apps
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - clusters:
-        selector:
-          matchLabels:
-            env: dev
-        values:
-          logLevel: debug
+    - git:
+        repoURL: https://github.com/<your-org>/<your-repo>.git
+        revision: HEAD
+        directories:
+          - path: apps/*
+        # Add exclusions with:
+        #   - path: apps/experimental/*
+        #     exclude: true
+        # The directory generator cannot test file contents, so keep the
+        # repository layout predictable instead.
   template:
     metadata:
-      name: 'podinfo-{{.name}}'
+      name: '{{.path.basename}}'
+      labels:
+        managed-by: applicationset
+        generator: git-directory
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       source:
-        repoURL: https://github.com/stefanprodan/podinfo.git
-        targetRevision: master
-        path: charts/podinfo
+        repoURL: https://github.com/<your-org>/<your-repo>.git
+        targetRevision: HEAD
+        path: '{{.path}}'
         helm:
-          releaseName: podinfo
-          values: |
-            logLevel: {{.values.logLevel}}
+          releaseName: '{{.path.basenameNormalized}}'
       destination:
-        server: '{{.server}}'
-        namespace: podinfo
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
       syncPolicy:
         automated:
           prune: true
@@ -100,36 +182,14 @@ spec:
           - CreateNamespace=true
 ```
 
-```bash
-kubectl apply -f appsets/cluster-dev.yaml
-kubectl -n argocd get applications
-```
-
-Only the cluster with label `env=dev` is selected. Use `matchExpressions` for
-more advanced selection:
+A real exclusion looks like:
 
 ```yaml
-selector:
-  matchExpressions:
-    - key: env
-      operator: In
-      values: [dev, staging]
-    - key: region
-      operator: NotIn
-      values: [us]
+directories:
+  - path: apps/*
+  - path: apps/experimental/*
+    exclude: true
 ```
 
-### 4. Verify the deployment
-
-```bash
-argocd app get podinfo-dev
-argocd app sync podinfo-dev
-argocd app wait podinfo-dev --health
-```
-
-
-From the Argo CD CLI you can inspect the target without switching:
-
-```bash
-argocd app get podinfo-dev --show-params
-```
+The repository URL in the generator and in the template must match. Use a
+read-only deploy key or a repository that Argo CD can clone anonymously.
