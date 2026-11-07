@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: root-app-directory-approach
+  name: root-app-helm-approach
   namespace: argocd
 spec:
   destination:
@@ -14,11 +14,9 @@ spec:
     kind: Application
   project: default
   source:
-    path: directory-of-apps
-    repoURL: https://github.com/libialany/argocd-course-app-of-apps.git
+    path: apps-helm-chart/apps
+    repoURL: https://github.com/mabusaa/argocd-course-app-of-apps.git
     targetRevision: main
-    directory:
-      recurse: true
   syncPolicy:
     automated:
       allowEmpty: true

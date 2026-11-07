@@ -1,125 +1,139 @@
-# App of Apps - Directory of Apps Approach
+# App of Apps - Helm Chart Approach
 
 ## Introduction
 
-**App of Apps** is a pattern where one Argo CD Application (the **root app**)
-deploys other Argo CD Applications (the **child apps**), and those child apps in
-turn deploy workloads. The root app is only responsible for the Application
-resources; it does not deploy the workloads directly.
+The **Helm chart approach to App of Apps** packages the child Application
+manifests as Helm templates. The root Application points at a Helm chart. When
+the chart is rendered, it produces Argo CD Application resources. Each rendered
+Application then deploys its own workload.
 
-In the **directory of apps** approach, the child Application manifests are plain
-YAML files stored in a directory tree in Git. The root app points at that
-directory and syncs it. Argo CD applies every Application manifest it finds.
+Instead of copying one YAML file per child app, you define a list in
+`values.yaml` and a single template that ranges over the list. This keeps the
+child app definition
 
-**Why it exists**
 
-- Bootstraps a whole platform from a single Application.
-- Gives a single place to see and control a group of applications.
+### How it works
 
-**When to use it**
-
-- You want a root app that installs a fixed set of Applications from plain
-  manifests.
-- Child apps have different sources and should remain independent.
-
-### Root app vs child app
-
-| | Root app | Child app |
-|---|----------|-----------|
-| Source | Directory of Application manifests | Workload manifests or Helm chart |
-| Destination namespace | `argocd` | Workload namespace |
-| Deploys | Application CRs | Deployments, Services, etc. |
-| Sync policy | Usually manual or automated | Set per child (manual in this exercise) |
-
-Deleting the root app does not automatically delete child apps unless Git no
-longer contains them and the root app syncs with prune, or you delete the child
-apps explicitly. This is an important operational difference from
-ApplicationSets, where generated Applications are owned by the ApplicationSet.
+1. The root Application is created with `kubectl apply`.
+2. The root Application's source is a Helm chart in Git.
+3. Argo CD renders the chart and applies the resulting Application CRs.
+4. Each child Application has `syncPolicy.automated`, so it immediately syncs its
+   own workload.
+5. Changing `values.yaml` changes the child Applications on the next root sync.
 
 ## Implementation
 
-### 1. Create the directory structure
-
-In a Git repository:
+### 1. Create the app-of-apps Helm chart
 
 ```
-argocd-apps/
-├── root.yaml
-└── apps/
-    ├── dev/
-    │   ├── frontend.yaml
-    │   └── backend.yaml
-    └── prod/
-        └── frontend.yaml
+app-of-apps/
+├── Chart.yaml
+├── values.yaml
+└── templates/
+    └── applications.yaml
 ```
 
-The root app source path is `apps`, so every Application manifest under `apps`
-and its subdirectories is applied. Subdirectories require
-`directory.recurse: true`.
-
-### 2. Create the child Application manifests
-
-`apps/dev/frontend.yaml`:
+`Chart.yaml`:
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: frontend-dev
-  namespace: argocd
-  labels:
-    env: dev
-    tier: frontend
-spec:
+apiVersion: v2
+name: app-of-apps
+description: Root chart that renders Argo CD Applications
+type: application
+version: 0.1.0
+appVersion: "1.0"
+```
+
+`values.yaml`:
+
+```yaml
+defaults:
   project: default
-  source:
+  targetRevision: HEAD
+  server: https://kubernetes.default.svc
+  autoSync: true
+
+apps:
+  - name: guestbook
+    namespace: guestbook
     repoURL: https://github.com/argoproj/argocd-example-apps.git
-    targetRevision: HEAD
     path: guestbook
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: frontend-dev
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
+  - name: helm-guestbook
+    namespace: helm-guestbook
+    repoURL: https://github.com/argoproj/argocd-example-apps.git
+    path: helm-guestbook
+  - name: podinfo
+    namespace: podinfo
+    repoURL: https://github.com/stefanprodan/podinfo.git
+    targetRevision: master
+    path: charts/podinfo
 ```
 
-`apps/dev/backend.yaml`:
+`templates/applications.yaml`:
 
 ```yaml
+{{- $defaults := .Values.defaults }}
+{{- range .Values.apps }}
+{{- $autoSync := $defaults.autoSync }}
+{{- if hasKey . "autoSync" }}
+{{- $autoSync = .autoSync }}
+{{- end }}
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: backend-dev
+  name: {{ .name }}
   namespace: argocd
   labels:
-    env: dev
-    tier: backend
+    managed-by: app-of-apps
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
-  project: default
+  project: {{ default $defaults.project .project }}
   source:
-    repoURL: https://github.com/argoproj/argocd-example-apps.git
-    targetRevision: HEAD
-    path: helm-guestbook
+    repoURL: {{ .repoURL }}
+    targetRevision: {{ default $defaults.targetRevision .targetRevision }}
+    {{- if .chart }}
+    chart: {{ .chart }}
+    {{- else }}
+    path: {{ .path }}
+    {{- end }}
+    {{- if .helm }}
     helm:
-      valueFiles:
-        - values.yaml
+      {{- toYaml .helm | nindent 6 }}
+    {{- end }}
   destination:
-    server: https://kubernetes.default.svc
-    namespace: backend-dev
+    server: {{ default $defaults.server .server }}
+    namespace: {{ .namespace }}
   syncPolicy:
+    {{- if $autoSync }}
+    automated:
+      prune: true
+      selfHeal: true
+    {{- end }}
     syncOptions:
       - CreateNamespace=true
+{{- end }}
 ```
 
-Notice that the child apps have **no `automated` sync policy**. They are synced
-manually, as required by the exercise. They may still be refreshed automatically,
-but no deployment happens until someone syncs them.
+Template notes:
 
-Each child app should have `CreateNamespace=true` if the destination namespace
-does not exist.
+- `range` renders one Application per entry in `.Values.apps`.
+- `default` lets a per-app value override the chart-wide default.
+- `toYaml | nindent` is how structured Helm values are embedded safely.
+- The child Applications use `automated` sync with `prune` and `selfHeal`.
+- The `resources-finalizer.argocd.argoproj.io` finalizer ensures workloads are
+  removed when a child Application is deleted.
+- The Application CRs live in the `argocd` namespace, while each workload targets
+  its own namespace.
 
-### 3. Create the root Application
+Render the chart locally before committing:
+
+```bash
+helm template app-of-apps ./app-of-apps
+```
+
+### 2. Create the root Application
 
 `root.yaml`:
 
@@ -134,37 +148,45 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/<your-org>/argocd-apps.git
+    repoURL: https://github.com/<your-org>/<your-repo>.git
     targetRevision: main
-    path: apps
-    directory:
-      recurse: true
+    path: app-of-apps
+    helm:
+      releaseName: app-of-apps
+      valueFiles:
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
 ```
 
-Key points:
-
-- `path: apps` points at the directory of child Applications.
-- `directory.recurse: true` includes `apps/dev`, `apps/prod`, and deeper.
-- The destination is the Argo CD namespace because that is where child
-  Application CRs live.
-- The root app has no `automated` policy, so you explicitly sync it.
-- Do not add `prune: true` until you understand which Application CRs would be
-  removed when a file disappears.
+If the chart is stored in a Helm repository instead of Git, use `chart: app-of-apps`
+with the repository URL and a chart version, instead of `path` and
+`valueFiles`.
 
 
-## Comparison with ApplicationSet
+### 3. Add a child app through values
 
-| Property | App of Apps (directory) | ApplicationSet |
-|----------|-------------------------|----------------|
-| Child app manifests | Stored in Git as files | Rendered from a template |
-| Adding an app | Add a file and sync root | Add generator input (list, directory, PR) |
-| Ownership | Root app applies CRs; no generator owns them | ApplicationSet owns generated Applications |
-| Removal | Git delete + prune sync | Automatic when generator stops producing the app |
-| Best for | Hand-crafted, heterogeneous apps | Repetitive or dynamic apps |
+Add an entry to `values.yaml`:
 
+```yaml
+  - name: redis
+    namespace: redis
+    repoURL: https://charts.bitnami.com/bitnami
+    chart: redis
+    targetRevision: 20.6.2
+    helm:
+      releaseName: redis
+```
+
+The template's `if .chart / else .path` branch supports both a Helm repository
+chart and a chart stored in Git, so the same app catalog can mix source types.
+
+Commit, push, and let the root app sync (or run `argocd app sync root`). The new
+child Application is rendered and, because it is automated, syncs itself.
