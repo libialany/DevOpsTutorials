@@ -1,36 +1,46 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: git-directory-apps
+  name: webapp-preview
   namespace: argocd
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - git:
-        repoURL: https://github.com/libialany/argocd-apps.git
-        revision: HEAD
-        directories:
-          - path: apps/*
+    - pullRequest:
+        github:
+          owner: libialany
+          repo: argocd-course-webapp
+          tokenRef:
+            secretName: github-token
+            key: token
+          labels:
+            - preview
+        requeueAfterSeconds: 60
   template:
     metadata:
-      name: '{{.path.basename}}'
+      name: 'webapp-pr-{{.number}}'
       labels:
         managed-by: applicationset
-        generator: git-directory
+        generator: pull-request
+        preview: "true"
+      annotations:
+        preview.example.com/pr: '{{.number}}'
+        preview.example.com/branch: '{{.branch}}'
+        preview.example.com/sha: '{{.head_sha}}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
       source:
-        repoURL: https://github.com/libialany/argocd-apps.git
-        targetRevision: HEAD
-        path: '{{.path.path}}'
+        repoURL: https://github.com/libialany/argocd-course-webapp.git
+        targetRevision: '{{.head_sha}}'
+        path: helm/webapp
         helm:
-          releaseName: '{{.path.basenameNormalized}}'
+          releaseName: 'webapp-pr-{{.number}}'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{.path.basename}}'
+        namespace: 'pr-{{.number}}'
       syncPolicy:
         automated:
           prune: true
